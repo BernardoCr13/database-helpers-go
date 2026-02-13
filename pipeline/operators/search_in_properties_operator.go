@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pixie-sh/database-helpers-go/pipeline/operators/models"
-	"github.com/pixie-sh/errors-go"
-	pulid "github.com/pixie-sh/ulid-go"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pixie-sh/database-helpers-go/pipeline/operators/models"
+	"github.com/pixie-sh/errors-go"
+	pulid "github.com/pixie-sh/ulid-go"
 )
 
 type SearchInPropertiesOperator struct {
@@ -113,6 +114,8 @@ func (op *SearchInPropertiesOperator) buildCondition(prop models.SearchablePrope
 	switch prop.Type {
 	case "text", "varchar":
 		return op.buildTextCondition(prop, searchTerm)
+	case "[]text":
+		return op.buildTextArrayCondition(prop, searchTerm)
 	case "int", "bigint":
 		return op.buildIntCondition(prop, searchTerm)
 	case "date":
@@ -127,10 +130,10 @@ func (op *SearchInPropertiesOperator) buildCondition(prop models.SearchablePrope
 
 func (op *SearchInPropertiesOperator) buildInCondition(prop models.SearchableProperty, terms []queryPart) (string, []interface{}) {
 	var values []interface{}
-	
+
 	for _, term := range terms {
 		var parsedValue interface{}
-		
+
 		switch prop.Type {
 		case "text", "varchar", "enum":
 			parsedValue = term.Value
@@ -151,22 +154,22 @@ func (op *SearchInPropertiesOperator) buildInCondition(prop models.SearchablePro
 				parsedValue = ulid
 			}
 		}
-		
+
 		if parsedValue != nil {
 			values = append(values, parsedValue)
 		}
 	}
-	
+
 	if len(values) == 0 {
 		return "", nil
 	}
-	
+
 	// Build placeholders for IN clause
 	placeholders := make([]string, len(values))
 	for i := range placeholders {
 		placeholders[i] = "?"
 	}
-	
+
 	return fmt.Sprintf("%s IN (%s)", prop.Field, strings.Join(placeholders, ", ")), values
 }
 
@@ -201,6 +204,34 @@ func (op *SearchInPropertiesOperator) buildTextCondition(prop models.SearchableP
 	}
 
 	return prop.Field + " " + prop.Comparison + " ?", searchTerm
+}
+
+func (op *SearchInPropertiesOperator) buildTextArrayCondition(prop models.SearchableProperty, searchTerm string) (string, interface{}) {
+
+	// Contains, string has to change
+	if prop.Comparison == "@>" || prop.Comparison == "&&" {
+		containsTerm := formatToPgArray(searchTerm)
+
+		return prop.Field + " " + prop.Comparison + " ?", containsTerm
+	}
+
+	fieldTerm := fmt.Sprintf("ANY(%s)", prop.Field)
+	return "? " + prop.Comparison + " " + fieldTerm, searchTerm
+}
+
+func formatToPgArray(input string) string {
+	// 1. Split the string by commas
+	elements := strings.Split(input, ",")
+
+	// 2. Trim whitespace and wrap each element in double quotes
+	var quoted []string
+	for _, el := range elements {
+		trimmed := strings.TrimSpace(el)
+		quoted = append(quoted, fmt.Sprintf("\"%s\"", trimmed))
+	}
+
+	// 3. Join with commas and wrap in curly braces
+	return fmt.Sprintf("{%s}", strings.Join(quoted, ", "))
 }
 
 func (op *SearchInPropertiesOperator) buildIntCondition(prop models.SearchableProperty, searchTerm string) (string, interface{}) {
