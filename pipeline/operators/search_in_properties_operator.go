@@ -207,30 +207,31 @@ func (op *SearchInPropertiesOperator) buildTextCondition(prop models.SearchableP
 }
 
 func (op *SearchInPropertiesOperator) buildTextArrayCondition(prop models.SearchableProperty, searchTerm string) (string, interface{}) {
-	fieldTerm := fmt.Sprintf("ANY(%s)", prop.Field)
 
-	if prop.LikeBefore || prop.LikeAfter || prop.Ilike || prop.Unaccent {
-		var likeTerm string
-		var likeOperator string
+	// Contains, string has to change
+	if prop.Comparison == "@>" || prop.Comparison == "&&" {
+		containsTerm := formatToPgArray(searchTerm)
 
-		if prop.Ilike {
-			likeOperator = "ILIKE"
-		} else {
-			likeOperator = "LIKE"
-		}
-
-		likeTerm = searchTerm
-		if prop.LikeBefore {
-			likeTerm = "%" + likeTerm
-		}
-		if prop.LikeAfter {
-			likeTerm = likeTerm + "%"
-		}
-
-		return "? " + likeOperator + fieldTerm, likeTerm
+		return prop.Field + " " + prop.Comparison + " ?", containsTerm
 	}
 
+	fieldTerm := fmt.Sprintf("ANY(%s)", prop.Field)
 	return "? " + prop.Comparison + " " + fieldTerm, searchTerm
+}
+
+func formatToPgArray(input string) string {
+	// 1. Split the string by commas
+	elements := strings.Split(input, ",")
+
+	// 2. Trim whitespace and wrap each element in double quotes
+	var quoted []string
+	for _, el := range elements {
+		trimmed := strings.TrimSpace(el)
+		quoted = append(quoted, fmt.Sprintf("\"%s\"", trimmed))
+	}
+
+	// 3. Join with commas and wrap in curly braces
+	return fmt.Sprintf("{%s}", strings.Join(quoted, ", "))
 }
 
 func (op *SearchInPropertiesOperator) buildIntCondition(prop models.SearchableProperty, searchTerm string) (string, interface{}) {
